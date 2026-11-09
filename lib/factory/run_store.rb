@@ -52,6 +52,21 @@ module Factory
       copy(@data)
     end
 
+    def transition(state, attributes = {})
+      allowed = {"pending" => %w[preparing], "preparing" => %w[prepared failed interrupted]}
+      unless allowed.fetch(@data.fetch("state"), []).include?(state)
+        raise ArgumentError, "Invalid run transition: #{@data.fetch('state')} -> #{state}"
+      end
+      @data.merge!(copy(attributes)).merge!("state" => state)
+      record_event("run_transition", "state" => state)
+      snapshot
+    end
+
+    def record_workspace(workspace)
+      @data["workspace"] = copy(workspace)
+      record_event("workspace_recorded")
+    end
+
     private
 
     def canonical_path(path)

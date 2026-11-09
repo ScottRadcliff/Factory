@@ -1,0 +1,12 @@
+version: 1
+id: test-task
+repository: ../..
+base_branch: main
+title: Test task
+description: A task used by the factory test suite.
+acceptance_criteria:
+  - Tests pass.
+verification:
+  - name: specs
+    command: [bundle, exec, rspec]
+    timeout_seconds: 600

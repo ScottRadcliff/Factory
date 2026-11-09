@@ -8,7 +8,7 @@ RSpec.describe Factory::RunStore do
     end
   end
 
-  let(:task) { Factory::TaskSpec.load(File.expand_path("../examples/task.yml", __dir__)) }
+  let(:task) { Factory::TaskSpec.load(File.expand_path("fixtures/task.yml", __dir__)) }
   let(:store) { described_class.new(task: task, root: @root) }
 
   it "creates unique private run directories and saves the effective task" do

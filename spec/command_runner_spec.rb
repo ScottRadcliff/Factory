@@ -9,7 +9,7 @@ RSpec.describe Factory::CommandRunner do
     end
   end
 
-  let(:task) { Factory::TaskSpec.load(File.expand_path("../examples/task.yml", __dir__)) }
+  let(:task) { Factory::TaskSpec.load(File.expand_path("fixtures/task.yml", __dir__)) }
   let(:store) { Factory::RunStore.new(task: task, root: File.join(@directory, "runs")) }
   let(:runner) { described_class.new(store: store) }
 

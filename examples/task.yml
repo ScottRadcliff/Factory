@@ -1,7 +1,7 @@
 version: 1
 id: reject-blank-display-names
 # Relative to this file. Replace with the path to your application.
-repository: ..
+repository: ~/Desktop/factory_test
 base_branch: main
 title: Reject blank display names
 description: |

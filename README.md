@@ -2,7 +2,7 @@
 
 A Ruby orchestrator for taking structured development tasks through Codex implementation, verification, repair, and GitHub pull request review.
 
-Task validation, subprocess execution, and file-backed run logging are implemented. The CLI currently exposes validation; execution primitives are available through Ruby. Worktrees, agent execution, verification orchestration, retries, and PR publication are subsequent increments.
+Task validation, subprocess execution, file-backed run logging, and Git worktree preparation are implemented. The CLI exposes validation and preparation. Agent execution, verification orchestration, retries, and PR publication are subsequent increments.
 
 ## Setup
 
@@ -48,9 +48,23 @@ Strings cannot contain NUL bytes. YAML aliases, object deserialization, duplicat
 
 Task files should come from trusted operators: future execution increments will run their configured commands. Worktrees will isolate changes but will not be a security boundary for host processes.
 
+## Prepare an isolated worktree
+
+Set `repository` in your task file to your application's Git repository root, with an existing local `base_branch`, then run:
+
+```sh
+bin/factory prepare examples/task.yml
+```
+
+This creates a unique `factory/<task-id>-<uuid>` branch and a worktree inside the run directory. JSON output includes the worktree path, resolved base SHA, branch, and `result.json` path. The run ends in `prepared`; it does not invoke Codex, run verification, commit, push, or open a PR.
+
+Preparation uses the named local branch without fetching. Update that branch yourself before preparation if you need newer remote changes. Your original checkout's branch, HEAD, staged changes, and working files are preserved; uncommitted changes are not copied into the worktree. Git metadata is shared. Subdirectory paths, missing branches, and invalid branch names fail preparation with retained command logs. Git hooks and Git configuration still apply.
+
+Each invocation creates a fresh run. Failed or interrupted preparation retains its planned workspace and artifacts when available, including any partial Git changes, for manual inspection. There is no automatic cleanup or resume yet. Exit status is `1` for preparation failures and `130` for interruption.
+
 ## Architecture and next increments
 
-`TaskSpec` loads and validates immutable task data. `CLI` handles output and exit codes. `CommandRunner` executes subprocesses, and `RunStore` retains their inputs, output, and results.
+`TaskSpec` loads and validates immutable task data. `CLI` handles output and exit codes. `CommandRunner` executes subprocesses, and `RunStore` retains their inputs, output, and results. `GitWorkspace` prepares isolated checkouts and records `preparing`, `prepared`, `failed`, or `interrupted` outcomes.
 
 ### Subprocess execution and logs
 
@@ -77,10 +91,9 @@ Interruptions retain command results and re-raise `Interrupt`. Command failures 
 
 Build the remaining pieces in this order, with tests at each boundary:
 
-1. `GitWorkspace`: resolve a base commit and create a unique worktree and branch without changing the original checkout.
-2. `CodexAgent`: noninteractive implementation in the worktree with explicit sandbox settings.
-3. `Verifier` and `Runner`: execute checks, bound repair attempts, and record explicit failure states.
-4. `GitHubPublisher`: commit verified changes, push, and create a draft PR requiring human approval before merging.
+1. `CodexAgent`: noninteractive implementation in the worktree with explicit sandbox settings.
+2. `Verifier` and `Runner`: execute checks, bound repair attempts, and record explicit failure states.
+3. `GitHubPublisher`: commit verified changes, push, and create a draft PR requiring human approval before merging.
 
 The intended lifecycle is `pending → preparing → implementing → verifying → committing → publishing → awaiting_review`. Failed verification may enter `repairing` and return to `verifying` within the repair budget. Failures and interruptions retain artifacts for inspection. Local-only runs will stop after verification and commit.
 
