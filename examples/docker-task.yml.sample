@@ -1,0 +1,45 @@
+version: 1
+id: update-home-heading
+repository: /path/to/your/application
+base_branch: main
+title: Update the home page heading
+description: |
+  Change the existing home page heading to "Factory Test App".
+  Add regression coverage using the application's existing test framework.
+acceptance_criteria:
+  - The home page displays the heading "Factory Test App".
+  - The existing tests and new regression coverage pass.
+verification:
+  - name: docker-tests
+    command:
+      - docker
+      - compose
+      - --file
+      - compose.yaml
+      - --project-name
+      - 'factory-{{run_id}}'
+      - run
+      - --build
+      - --rm
+      - -T
+      - -e
+      - RAILS_ENV=test
+      - web
+      - sh
+      - -c
+      - bundle install && bin/rails db:prepare && bin/rails test
+    timeout_seconds: 1200
+    cleanup:
+      - docker
+      - compose
+      - --file
+      - compose.yaml
+      - --project-name
+      - 'factory-{{run_id}}'
+      - down
+      - --volumes
+      - --remove-orphans
+    cleanup_timeout_seconds: 120
+limits:
+  max_repairs: 2
+  agent_timeout_seconds: 1800

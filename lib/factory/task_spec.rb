@@ -51,12 +51,18 @@ module Factory
       names = []
       checks = data["verification"].each_with_index.map do |check, index|
         field = "verification[#{index}]"
-        mapping!(check, field, %w[name command timeout_seconds])
+        mapping!(check, field, %w[name command timeout_seconds cleanup cleanup_timeout_seconds])
         string!(check["name"], "#{field}.name")
         invalid!("Verification names must be unique: #{check['name']}") if names.include?(check["name"])
         names << check["name"]
         string_list!(check["command"], "#{field}.command")
         integer!(check["timeout_seconds"], "#{field}.timeout_seconds", 1..86_400)
+        if check.key?("cleanup")
+          string_list!(check["cleanup"], "#{field}.cleanup")
+          integer!(check.fetch("cleanup_timeout_seconds", 60), "#{field}.cleanup_timeout_seconds", 1..86_400)
+        elsif check.key?("cleanup_timeout_seconds")
+          invalid!("#{field}.cleanup_timeout_seconds requires cleanup")
+        end
         check
       end
       limits = data.fetch("limits", {})

@@ -118,6 +118,30 @@ RSpec.describe Factory::TaskSpec do
     expect { load_data }.to raise_error(Factory::InvalidTaskSpec, /unique/)
   end
 
+  it "accepts optional cleanup commands and timeout" do
+    data["verification"].first.merge!("cleanup" => ["docker", "compose", "down"], "cleanup_timeout_seconds" => 120)
+    expect(load_data.to_h.fetch("verification").first.fetch("cleanup_timeout_seconds")).to eq(120)
+  end
+
+  [nil, [], "docker compose down", [42]].each do |value|
+    it "rejects invalid cleanup #{value.inspect}" do
+      data["verification"].first["cleanup"] = value
+      expect { load_data }.to raise_error(Factory::InvalidTaskSpec, /cleanup/)
+    end
+  end
+
+  it "rejects cleanup timeout without a cleanup command" do
+    data["verification"].first["cleanup_timeout_seconds"] = 10
+    expect { load_data }.to raise_error(Factory::InvalidTaskSpec, /requires cleanup/)
+  end
+
+  [nil, 0, 86_401, "120"].each do |value|
+    it "rejects invalid cleanup timeout #{value.inspect}" do
+      data["verification"].first.merge!("cleanup" => ["true"], "cleanup_timeout_seconds" => value)
+      expect { load_data }.to raise_error(Factory::InvalidTaskSpec, /cleanup_timeout_seconds/)
+    end
+  end
+
   [nil, 0, -1, 86_401, 1.5, "600", false].each do |timeout|
     it "rejects check timeout #{timeout.inspect}" do
       data["verification"].first["timeout_seconds"] = timeout

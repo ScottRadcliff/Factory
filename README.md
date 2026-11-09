@@ -29,7 +29,7 @@ Copy `examples/task.yml.sample` to `examples/task.yml`, set `repository` to your
 
 ## Task format
 
-All fields in the example are required except `limits`. Omitting `limits` or individual limit fields supplies the defaults below. Unknown fields are rejected at every mapping level.
+All fields in the native example are required except `limits`. Omitting `limits` or individual limit fields supplies the defaults below. Verification cleanup fields are optional. Unknown fields are rejected at every mapping level.
 
 | Field | Contract |
 | --- | --- |
@@ -43,6 +43,8 @@ All fields in the example are required except `limits`. Omitting `limits` or ind
 | `verification[].name` | Nonblank string. |
 | `verification[].command` | Nonempty argument array, such as `[bundle, exec, rspec]`. Shell command strings are rejected. |
 | `verification[].timeout_seconds` | Integer from 1 to 86400. |
+| `verification[].cleanup` | Optional command argument array, run after the check even on failure, timeout, or interruption. |
+| `verification[].cleanup_timeout_seconds` | Optional integer from 1 to 86400; default 60. Requires `cleanup`. |
 | `limits.max_repairs` | Integer from 0 to 10; default 2. Counts repairs after initial implementation. |
 | `limits.agent_timeout_seconds` | Integer from 1 to 86400; default 1800. |
 
@@ -111,7 +113,7 @@ The `implement` command ends in `implemented`, with verification explicitly `pen
 bin/factory run examples/task.yml
 ```
 
-This creates a fresh worktree, implements the task, and runs every configured verification command in YAML order from the worktree root. Each command has its own timeout and retained stdout/stderr logs. The full suite runs even when an earlier check fails. Ensure the target application's dependencies and test services are available before running; setup and database isolation are not automated.
+This creates a fresh worktree, implements the task, and runs every configured verification command in YAML order from the worktree root. Each command has its own timeout and retained stdout/stderr logs. The full suite runs even when an earlier check fails. For native checks, ensure the target application's dependencies and test services are available before running. For Compose apps, see the Docker example below.
 
 If checks fail, Codex receives their command metadata and the last 8 KiB of each failed stdout/stderr log, labeled as untrusted diagnostic data. Repairs run in the same worktree with distinct summaries and command logs. Every repair is followed by the full verification suite. `max_repairs: 2` permits one implementation and at most two repairs, for at most three verification cycles. Setting it to `0` disables repairs. Check timeouts and nonzero exits consume this budget; missing executables and other command-start failures stop immediately after the check suite. Agent failures stop immediately without infrastructure retries.
 
@@ -120,6 +122,18 @@ The factory checks branch and HEAD after each agent call and verification suite.
 Successful runs end in `verified` with `verification: passed`; failed runs record their stage (`verifying` or `repairing`) and error. Exit codes are `0` for verified runs, `1` for failures, and `130` for interruption. Artifacts and worktrees are retained in all cases. Each invocation starts a new run; resumption is not supported.
 
 Passing configured checks does not prove all acceptance criteria are met. Verification commands execute trusted operator-supplied code directly on the host and may modify files. Human review is still required. This command does not commit, push, or create a PR yet.
+
+### Docker Compose verification
+
+For a Rails/Minitest application with `compose.yaml`, service `web`, and a relative `.:/app` bind mount, start with `examples/docker-task.yml.sample`. Copy it to a local task file and set the repository and task details. The sample runs dependency installation, test-database preparation, and `bin/rails test` inside a one-off container. It uses an explicit Compose file in the worktree and builds from that directory. Adapt the service, Compose filename, and test commands for other applications.
+
+Verification `command` and `cleanup` arguments support the literal placeholder `{{run_id}}`, replaced with the current unique run ID without invoking a shell. The Docker sample uses `factory-{{run_id}}` as the project name in both commands. Relative source mounts resolve to the worktree. In the inspected application, project-scoped bundle and PostgreSQL volumes keep the factory's test environment separate from the normal development project. [Compose run](https://docs.docker.com/reference/cli/docker/compose/run/) starts one-off containers without publishing the service's normal ports.
+
+The optional cleanup command runs after each check, including failed, timed-out, or interrupted checks, and has its own timeout and command logs. The sample uses [Compose down with `--volumes`](https://docs.docker.com/reference/cli/docker/compose/down/) for the same unique project, removing its containers and disposable test volumes after every attempt. Do not use this cleanup against your regular development project. Explicitly named/shared resources, external databases, external volumes, fixed host ports on dependencies, and absolute bind mounts require separate review; a project name alone does not isolate them.
+
+Cleanup failures stop the run without asking Codex to repair them. `verification_attempts[].checks[].cleanup` retains the cleanup result. Cleanup is best effort: killing the factory process with SIGKILL, a second interruption during cleanup, or an unavailable Docker daemon can leave resources behind. Command logs include the expanded project name for manual cleanup. Build images and caches remain; the factory does not prune Docker resources globally.
+
+Tests exercise cleanup and placeholder expansion without starting real containers. Compose configuration can be checked separately to confirm bind mounts and volume names before a live verification run.
 
 ## Architecture and next increments
 

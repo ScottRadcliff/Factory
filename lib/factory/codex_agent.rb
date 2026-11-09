@@ -56,6 +56,14 @@ module Factory
     end
 
     def prompt
+      run_id = @store.snapshot.fetch("run_id")
+      checks = @task.fetch("verification").map do |check|
+        commands = check.slice("command", "cleanup").transform_values do |argv|
+          argv.map { |argument| argument.gsub("{{run_id}}", run_id) }
+        end
+        check.merge(commands)
+      end
+      effective_task = @task.merge("verification" => checks)
       <<~PROMPT
         Implement the task below in the current worktree. Follow the repository's AGENTS.md instructions.
         Work as a single coding agent. Keep changes focused on the task and add appropriate tests.
@@ -65,7 +73,7 @@ module Factory
         Summarize changes, checks you ran, and remaining issues. The orchestrator will independently verify later.
 
         Task specification (JSON):
-        #{JSON.pretty_generate(@task)}
+        #{JSON.pretty_generate(effective_task)}
       PROMPT
     end
 

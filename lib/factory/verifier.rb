@@ -11,14 +11,39 @@ module Factory
       @store.record_verification(attempt, results)
       @checks.each do |check|
         @store.verification_event(check.fetch("name"), "running", attempt: attempt)
-        result = @command_runner.call(check.fetch("command"), chdir: workspace.fetch("path"),
-                                      timeout: check.fetch("timeout_seconds"))
-        results << result.merge("name" => check.fetch("name"))
-        @store.record_verification(attempt, results)
+        result = nil
+        cleanup = nil
+        begin
+          command = expand(check.fetch("command"))
+          result = @command_runner.call(command, chdir: workspace.fetch("path"), timeout: check.fetch("timeout_seconds"))
+          results << result.merge("name" => check.fetch("name"))
+        ensure
+          if check["cleanup"]
+            @store.verification_event(check.fetch("name"), "cleaning_up", attempt: attempt)
+            cleanup = @command_runner.call(expand(check.fetch("cleanup")), chdir: workspace.fetch("path"),
+                                          timeout: check.fetch("cleanup_timeout_seconds", 60))
+            results.last["cleanup"] = cleanup if result
+            # Interrupted checks have command records but no normal return value.
+            unless result
+              results << {"name" => check.fetch("name"), "state" => "interrupted", "success" => false, "cleanup" => cleanup}
+            end
+          end
+          @store.record_verification(attempt, results)
+        end
+        if cleanup && !cleanup.fetch("success")
+          raise VerificationError, "Verification cleanup failed for #{check.fetch('name')}; see #{cleanup.fetch('stderr_path')}"
+        end
         @store.verification_event(check.fetch("name"), result.fetch("state"), attempt: attempt)
       end
       @store.record_verification(attempt, results, complete: true)
       results
+    end
+
+    private
+
+    def expand(argv)
+      run_id = @store.snapshot.fetch("run_id")
+      argv.map { |argument| argument.gsub("{{run_id}}", run_id) }
     end
   end
 end

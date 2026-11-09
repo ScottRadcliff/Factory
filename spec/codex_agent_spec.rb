@@ -26,6 +26,17 @@ RSpec.describe Factory::CodexAgent do
     expect { agent(File.join(@directory, "missing")).implement(workspace) }.to raise_error(Factory::AgentError, /Codex command failed/)
   end
 
+  it "gives Codex the same expanded project name used by verification and cleanup" do
+    data = YAML.safe_load_file(@task_path)
+    data["verification"].first.merge!("command" => ["docker", "compose", "-p", "factory-{{run_id}}", "config"],
+                                       "cleanup" => ["docker", "compose", "-p", "factory-{{run_id}}", "down"])
+    File.write(@task_path, YAML.dump(data))
+    agent(fake_codex).implement(workspace)
+    input = File.read(store.snapshot.fetch("commands").last.fetch("stdin_path"))
+    expect(input).to include("factory-#{store.snapshot.fetch('run_id')}")
+    expect(input).not_to include("{{run_id}}")
+  end
+
   it "sends bounded failed-check diagnostics and saves a distinct repair summary" do
     executable = fake_codex
     current = workspace
