@@ -2,7 +2,7 @@
 
 A Ruby orchestrator for taking structured development tasks through Codex implementation, verification, repair, and GitHub pull request review.
 
-Task validation, subprocess execution, file-backed run logging, and Git worktree preparation are implemented. The CLI exposes validation and preparation. Agent execution, verification orchestration, retries, and PR publication are subsequent increments.
+Task validation, subprocess execution, file-backed run logging, Git worktree preparation, and Codex implementation are implemented. The CLI exposes `validate`, `prepare`, and `implement`. Independent verification, repairs, and PR publication are subsequent increments.
 
 ## Setup
 
@@ -64,9 +64,29 @@ Preparation uses the named local branch without fetching. Update that branch you
 
 Each invocation creates a fresh run. Failed or interrupted preparation retains its planned workspace and artifacts when available, including any partial Git changes, for manual inspection. There is no automatic cleanup or resume yet. Exit status is `1` for preparation failures and `130` for interruption.
 
+## Implement a task with Codex
+
+Install and authenticate Codex CLI on the machine running the factory. Check the executable and log in before starting:
+
+```sh
+codex --version
+codex login
+bin/factory implement examples/task.yml
+```
+
+This command creates a fresh worktree, sends the effective task specification and repository instructions to Codex, and leaves the resulting edits in that worktree for inspection. It does not reuse an earlier `prepare` run. The CLI prints the artifact directory to stderr before implementation starts and prints JSON results on success. Inspect the changes with `git -C <worktree-path> diff` and `git -C <worktree-path> status`.
+
+The adapter uses [Codex noninteractive execution](https://learn.chatgpt.com/docs/non-interactive-mode) with `workspace-write`, `approval_policy="never"`, JSON events, and a captured final message. It inherits your configured model and authentication. The task's `limits.agent_timeout_seconds` bounds the process. The retained command stdin contains the full prompt; `agent-summary.txt` contains Codex's final summary.
+
+The factory owns Git operations. It instructs Codex to work as one agent without committing, switching branches, pushing, or publishing, and checks the worktree's branch and HEAD afterward. These checks detect final Git state changes; they are not a security boundary or an audit of every command the agent ran. Existing Codex configuration, repository instructions, tools, and hooks still apply.
+
+A successful process must also emit a completed turn and a nonblank summary. Missing executables, authentication failures, timeouts, failed turns, malformed event output, and changed branch/HEAD fail the run with retained logs. Unknown event types are tolerated. The factory makes one agent call and does not automatically retry yet.
+
+The run ends in `implemented`, with verification explicitly `pending`. This means agent execution completed, not that the task was fulfilled: read the summary for blockers and inspect the edits. Codex may run checks itself, but the factory does not yet independently verify or repair changes, commit, push, or create a PR. The implementation command uses your Codex account and may incur usage charges.
+
 ## Architecture and next increments
 
-`TaskSpec` loads and validates immutable task data. `CLI` handles output and exit codes. `CommandRunner` executes subprocesses, and `RunStore` retains their inputs, output, and results. `GitWorkspace` prepares isolated checkouts and records `preparing`, `prepared`, `failed`, or `interrupted` outcomes.
+`TaskSpec` loads and validates immutable task data. `CLI` handles output and exit codes. `CommandRunner` executes subprocesses, and `RunStore` retains their inputs, output, and results. `GitWorkspace` prepares isolated checkouts and checks their Git identity. `CodexAgent` builds prompts and validates agent output. `Runner` coordinates preparation and implementation, recording failure stages and interruption.
 
 ### Subprocess execution and logs
 
@@ -87,15 +107,14 @@ Run artifacts default to `<repository-parent>/.factory/<repository-name>/<task-i
 
 Commands execute directly from argument arrays, with no implicit shell. Output streams go directly to files to avoid retaining large output in memory. Results distinguish success, nonzero exit, spawn errors, signal termination, timeout, and interruption. Timeouts use a monotonic clock and terminate the process group with TERM followed by KILL after a short grace period. Remaining descendants in that group are terminated when their leader exits. Processes that deliberately create separate sessions can escape this group; this is process management, not a security sandbox.
 
-Interruptions retain command results and re-raise `Interrupt`. Command failures return structured results so the future orchestrator can decide what to do. The run remains `pending` because task lifecycle transitions belong to the future `Runner`. Storage currently assumes a single writer; crash recovery, automatic resumption, and log rotation are deferred. Logs include command arguments, input, and unredacted output, so keep credentials out of task prompts and arguments and protect retained artifacts.
+Interruptions retain command results and re-raise `Interrupt`. Command failures return structured results so the orchestrator can decide what to do. Using `CommandRunner` directly leaves the run `pending`; task lifecycle transitions belong to `Runner` and `GitWorkspace`. Storage currently assumes a single writer; crash recovery, automatic resumption, and log rotation are deferred. Logs include command arguments, input, and unredacted output, so keep credentials out of task prompts and arguments and protect retained artifacts.
 
 ### Remaining increments
 
 Build the remaining pieces in this order, with tests at each boundary:
 
-1. `CodexAgent`: noninteractive implementation in the worktree with explicit sandbox settings.
-2. `Verifier` and `Runner`: execute checks, bound repair attempts, and record explicit failure states.
-3. `GitHubPublisher`: commit verified changes, push, and create a draft PR requiring human approval before merging.
+1. `Verifier` and an extended `Runner`: execute checks, bound repair attempts, and record explicit failure states.
+2. `GitHubPublisher`: commit verified changes, push, and create a draft PR requiring human approval before merging.
 
 The intended lifecycle is `pending → preparing → implementing → verifying → committing → publishing → awaiting_review`. Failed verification may enter `repairing` and return to `verifying` within the repair budget. Failures and interruptions retain artifacts for inspection. Local-only runs will stop after verification and commit.
 

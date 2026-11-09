@@ -71,5 +71,24 @@ RSpec.describe Factory::CLI do
       expect(err.string).to include("interrupted", "retained artifacts:")
       expect(out.string).to be_empty
     end
+
+    it "implements a task through a simulated Codex executable" do
+      fake_codex
+      executable = File.expand_path("../bin/factory", __dir__)
+      stdout, stderr, status = Open3.capture3({"PATH" => "#{@directory}:#{ENV.fetch('PATH')}"}, RbConfig.ruby, executable, "implement", @task_path)
+      expect(status.exitstatus).to eq(0)
+      expect(stderr).to include("results and logs:")
+      result = JSON.parse(stdout)
+      expect(result.fetch("state")).to eq("implemented")
+      expect(result.fetch("agent").fetch("verification")).to eq("pending")
+      expect(git("status", "--porcelain")).to be_empty
+    end
+
+    it "prints agent failures without a Ruby stack trace" do
+      allow_any_instance_of(Factory::Runner).to receive(:run).and_raise(Factory::AgentError, "agent failed")
+      expect(described_class.run(["implement", @task_path], out: out, err: err)).to eq(1)
+      expect(err.string).to include("Cannot implement task: agent failed")
+      expect(out.string).to be_empty
+    end
   end
 end

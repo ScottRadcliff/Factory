@@ -35,4 +35,26 @@ RSpec.shared_context "temporary Git repository" do
   end
 
   let(:task) { Factory::TaskSpec.load(@task_path) }
+
+  def fake_codex(body = nil)
+    executable = File.join(@directory, "codex")
+    body ||= <<~RUBY
+      File.write("app.txt", "implemented\\n")
+      File.write(ARGV.fetch(ARGV.index("--output-last-message") + 1), "Implemented task; verification is pending.")
+      puts JSON.generate("type" => "turn.completed", "usage" => {"input_tokens" => 10})
+    RUBY
+    File.write(executable, <<~RUBY)
+      #!#{RbConfig.ruby}
+      require "json"
+      abort "expected exec" unless ARGV.first == "exec"
+      abort "expected sandbox" unless ARGV[ARGV.index("--sandbox") + 1] == "workspace-write"
+      abort "expected approval policy" unless ARGV.include?('approval_policy="never"')
+      abort "expected JSON and stdin prompt" unless ARGV.include?("--json") && ARGV.last == "-"
+      prompt = STDIN.read
+      abort "missing task" unless prompt.include?("Task specification (JSON)")
+      #{body}
+    RUBY
+    File.chmod(0o700, executable)
+    executable
+  end
 end

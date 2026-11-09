@@ -35,10 +35,18 @@ module Factory
       end
     end
 
+    def verify_identity(workspace)
+      branch = git("symbolic-ref", "--short", "HEAD", dir: workspace.fetch("path")).strip
+      sha = git("rev-parse", "HEAD", dir: workspace.fetch("path")).strip
+      unless branch == workspace.fetch("branch") && sha == workspace.fetch("base_sha")
+        raise WorkspaceError, "Agent changed the worktree branch or HEAD; inspect retained Git state"
+      end
+    end
+
     private
 
-    def git(*arguments)
-      result = @command_runner.call(["git", *arguments], chdir: @repository, timeout: 60)
+    def git(*arguments, dir: @repository)
+      result = @command_runner.call(["git", *arguments], chdir: dir, timeout: 60)
       unless result.fetch("success")
         raise WorkspaceError, "Git command failed: #{arguments.inspect}; see #{result.fetch('stderr_path')}"
       end

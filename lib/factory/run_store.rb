@@ -53,7 +53,8 @@ module Factory
     end
 
     def transition(state, attributes = {})
-      allowed = {"pending" => %w[preparing], "preparing" => %w[prepared failed interrupted]}
+      allowed = {"pending" => %w[preparing], "preparing" => %w[prepared failed interrupted],
+                 "prepared" => %w[implementing], "implementing" => %w[implemented failed interrupted]}
       unless allowed.fetch(@data.fetch("state"), []).include?(state)
         raise ArgumentError, "Invalid run transition: #{@data.fetch('state')} -> #{state}"
       end
