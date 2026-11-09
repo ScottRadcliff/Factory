@@ -43,14 +43,39 @@ module Factory
       end
     end
 
+    def commit_verified(workspace)
+      raise WorkspaceError, "Cannot commit without successful verification" unless @store.snapshot["verification"] == "passed"
+      verify_identity(workspace)
+      dir = workspace.fetch("path")
+      git("add", "--all", "--", ".", dir: dir)
+      diff = git_result("diff", "--cached", "--quiet", dir: dir, required: false)
+      return nil if diff.fetch("exit_code") == 0
+      raise WorkspaceError, "Could not inspect staged changes" unless diff.fetch("exit_code") == 1
+      tree = git("write-tree", dir: dir).strip
+      git("commit", "-m", @task.fetch("title"), dir: dir)
+      sha = git("rev-parse", "HEAD", dir: dir).strip
+      @store.record_commit(sha)
+      unless git("symbolic-ref", "--short", "HEAD", dir: dir).strip == workspace.fetch("branch") &&
+             git("rev-parse", "HEAD^", dir: dir).strip == workspace.fetch("base_sha") &&
+             git("rev-parse", "HEAD^{tree}", dir: dir).strip == tree &&
+             git("status", "--porcelain", dir: dir).empty?
+        raise WorkspaceError, "Git state changed during commit; inspect the retained commit and worktree before publishing"
+      end
+      sha
+    end
+
     private
 
     def git(*arguments, dir: @repository)
+      File.read(git_result(*arguments, dir: dir).fetch("stdout_path"))
+    end
+
+    def git_result(*arguments, dir: @repository, required: true)
       result = @command_runner.call(["git", *arguments], chdir: dir, timeout: 60)
-      unless result.fetch("success")
+      if required && !result.fetch("success")
         raise WorkspaceError, "Git command failed: #{arguments.inspect}; see #{result.fetch('stderr_path')}"
       end
-      File.read(result.fetch("stdout_path"))
+      result
     end
   end
 end

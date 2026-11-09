@@ -2,7 +2,7 @@
 
 A Ruby orchestrator for taking structured development tasks through Codex implementation, verification, repair, and GitHub pull request review.
 
-Task validation, subprocess execution, file-backed run logging, Git worktree preparation, Codex implementation, independent verification, and bounded repairs are implemented. The CLI exposes `validate`, `prepare`, `implement`, and `run`. Commit and PR publication are the remaining milestone work.
+The first milestone is implemented: task validation, isolated worktrees, Codex implementation, verification, bounded repairs, retained logs, local commits, and draft GitHub PR publication. The CLI exposes `validate`, `prepare`, `implement`, `run`, and `submit`. Real target applications still need an end-to-end run to validate their environment and task setup.
 
 ## Setup
 
@@ -14,6 +14,27 @@ bundle exec rspec
 ```
 
 Validation uses Ruby standard libraries and needs no credentials, database, Codex installation, or GitHub CLI.
+
+## Make shortcuts
+
+```sh
+make help
+make login
+make auth-check
+make repo-check REPO=ScottRadcliff/factory_test
+make validate
+make run
+make submit-local
+make submit
+```
+
+`submit-local` verifies and commits locally. `submit` verifies, commits, pushes, and creates a draft PR. These targets start separate runs; they are alternatives, not steps to run consecutively. Defaults are `TASK=examples/task.yml` and `REMOTE=gh`. Override them as needed:
+
+```sh
+make submit TASK=examples/another-task.yml REMOTE=origin
+```
+
+GitHub and factory targets unset `GITHUB_TOKEN` and `GH_TOKEN` for the command so GitHub CLI uses stored authentication. This does not change your terminal's environment. `make test` runs the factory's test suite.
 
 ## Validate a task
 
@@ -121,7 +142,36 @@ The factory checks branch and HEAD after each agent call and verification suite.
 
 Successful runs end in `verified` with `verification: passed`; failed runs record their stage (`verifying` or `repairing`) and error. Exit codes are `0` for verified runs, `1` for failures, and `130` for interruption. Artifacts and worktrees are retained in all cases. Each invocation starts a new run; resumption is not supported.
 
-Passing configured checks does not prove all acceptance criteria are met. Verification commands execute trusted operator-supplied code directly on the host and may modify files. Human review is still required. This command does not commit, push, or create a PR yet.
+Passing configured checks does not prove all acceptance criteria are met. Verification commands execute trusted operator-supplied code directly on the host and may modify files. Human review is still required. The `run` command stops after verification; use `submit` to commit and publish.
+
+## Commit and submit for review
+
+For a local commit without a GitHub remote:
+
+```sh
+bin/factory submit --no-publish examples/task.yml
+```
+
+This implements a fresh task, verifies it with bounded repairs, stages all nonignored changes in the worktree, and commits using the task title. The original checkout remains on its branch with its changes preserved. The run ends in `committed` and reports the commit SHA. Git identity, hooks, and commit signing configuration apply. Ensure the target app's ignore rules exclude local credentials and generated artifacts before using submission.
+
+To push the verified commit and create a draft PR:
+
+```sh
+gh auth login
+bin/factory submit examples/task.yml
+# If the target application's remote has another name:
+bin/factory submit --remote gh examples/task.yml
+```
+
+Publication defaults to the target app's `origin` remote, not the factory repository's remote. Before calling Codex, submission checks the selected remote's push URL, resolves its GitHub repository through `gh`, checks authentication for that host, and checks that the base branch exists on the remote. A worktree and logs may already exist if preflight fails. Read access is checked; GitHub ultimately enforces push and PR permissions. Preflight does not fetch or update your local base branch.
+
+After verification, submission checks branch/HEAD, stages and commits the worktree, and confirms that hooks did not change the staged tree, parent, branch, or working files. If no changes were produced, the run ends in `no_changes` without creating an empty commit or PR. Changes during a commit or a rejected commit fail the run with retained staged files or commit details.
+
+The factory pushes the recorded SHA to the unique task branch without force-pushing. It then checks for an existing open PR for the same base/head and reuses it, or creates one with [`gh pr create --draft`](https://cli.github.com/manual/gh_pr_create), an explicit repository/base/head, and a retained `pr-body.md`. The body includes the task description, acceptance criteria, named check outcomes, and repair count. It does not upload command logs or agent summaries. No merge command is invoked; human review and approval are required.
+
+Published runs end in `awaiting_review`. JSON results include `commit` and `publication`, with the remote target, push status, and PR URL. A push can succeed while PR creation fails; the successful push is saved before PR creation begins, and the run ends in `failed` with stage `publishing`. There are no automatic publication retries or rollback. Inspect the remote branch and GitHub before manually retrying, especially after an interruption or ambiguous network error. Re-running `submit` starts a new run rather than resuming the old one.
+
+`run` remains verification-only; `submit --no-publish` commits locally; `submit` commits, pushes, and creates a draft PR. All three retain their artifacts. Submission tests use a local bare Git remote and a simulated GitHub executable, so automated tests do not create real GitHub PRs.
 
 ### Docker Compose verification
 
@@ -137,7 +187,7 @@ Tests exercise cleanup and placeholder expansion without starting real container
 
 ## Architecture and next increments
 
-`TaskSpec` loads and validates immutable task data. `CLI` handles output and exit codes. `CommandRunner` executes subprocesses, and `RunStore` retains their inputs, output, and results. `GitWorkspace` prepares isolated checkouts and checks their Git identity. `CodexAgent` builds implementation/repair prompts and validates agent output. `Verifier` executes configured checks; `Runner` coordinates preparation, implementation, verification, and bounded repairs, recording failure stages and interruption. Its Ruby API supports implementation only with `run`, or verification and repairs with `run(verify: true)`.
+`TaskSpec` loads and validates immutable task data. `CLI` handles output and exit codes. `CommandRunner` executes subprocesses, and `RunStore` retains their inputs, output, and results. `GitWorkspace` prepares isolated checkouts, checks their Git identity, and commits verified changes. `CodexAgent` builds implementation/repair prompts and validates agent output. `Verifier` executes configured checks; `GitHubPublisher` checks the destination, pushes exact commits, and creates draft PRs. `Runner` coordinates these stages and records failures and interruption. Its Ruby API supports implementation only with `run`, verification with `run(verify: true)`, local commits with `run(verify: true, commit: true)`, and publication by also passing `publish: true` and optionally `remote:`.
 
 ### Subprocess execution and logs
 
@@ -160,12 +210,10 @@ Commands execute directly from argument arrays, with no implicit shell. Output s
 
 Interruptions retain command results and re-raise `Interrupt`. Command failures return structured results so the orchestrator can decide what to do. Using `CommandRunner` directly leaves the run `pending`; task lifecycle transitions belong to `Runner` and `GitWorkspace`. Storage currently assumes a single writer; crash recovery, automatic resumption, and log rotation are deferred. Logs include command arguments, input, and unredacted output, so keep credentials out of task prompts and arguments and protect retained artifacts.
 
-### Remaining increments
+### Lifecycle and follow-ups
 
-Build the remaining pieces in this order, with tests at each boundary:
+Submission proceeds through `pending → preparing → prepared → preflighting → implementing → implemented → verifying → verified → committing → committed → publishing → awaiting_review`. Preflight is skipped for local-only runs. Verification failures may enter `repairing` and return to `verifying` within the repair budget. Failures and interruptions retain artifacts for inspection. Command selection determines whether execution stops at `prepared`, `implemented`, `verified`, or `committed`; unchanged tasks stop at `no_changes`.
 
-1. Commit verified changes, push, and create a draft PR through `GitHubPublisher`, requiring human approval before merging.
-
-The intended lifecycle is `pending → preparing → implementing → verifying → committing → publishing → awaiting_review`. Failed verification may enter `repairing` and return to `verifying` within the repair budget. Failures and interruptions retain artifacts for inspection. Local-only runs will stop after verification and commit.
+Operational follow-ups include dependency preflight, structured blocked outcomes, publication recovery, worktree cleanup, and testing against real applications and GitHub repositories.
 
 Keep execution synchronous and single-agent initially. PostgreSQL, Sidekiq, resumability, and multiple agents remain future work.

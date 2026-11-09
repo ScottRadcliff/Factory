@@ -7,6 +7,11 @@ module Factory
               "implemented" => "Implementation finished; verification pending",
               "verifying" => "Running independent verification…", "repairing" => "Repairing failed checks…",
               "verified" => "Verification passed; changes retained for review",
+              "preflighting" => "Checking GitHub repository, authentication, and remote base branch…",
+              "committing" => "Committing verified changes…", "committed" => "Verified changes committed locally",
+              "no_changes" => "No changes produced; no commit or PR created",
+              "publishing" => "Pushing verified commit and creating draft PR…",
+              "awaiting_review" => "Draft PR ready for human review",
               "failed" => "Run failed; inspect retained logs", "interrupted" => "Run interrupted"}.freeze
 
     def initialize(io: $stderr, clock: -> { Time.now })

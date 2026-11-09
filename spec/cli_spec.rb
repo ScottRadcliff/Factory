@@ -32,6 +32,11 @@ RSpec.describe Factory::CLI do
     expect(err.string).to be_empty
   end
 
+  it "rejects invalid submission flags" do
+    expect(described_class.run(["submit", "--unknown", "task.yml"], out: out, err: err)).to eq(2)
+    expect(err.string).to include("invalid option", "Usage:")
+  end
+
   it "runs the actual executable from another working directory" do
     executable = File.expand_path("../bin/factory", __dir__)
     Dir.mktmpdir do |directory|
@@ -108,6 +113,26 @@ RSpec.describe Factory::CLI do
       allow_any_instance_of(Factory::Runner).to receive(:run).and_raise(Factory::VerificationError, "exhausted repairs")
       expect(described_class.run(["run", @task_path], out: out, err: err)).to eq(1)
       expect(err.string).to include("Verification failed: exhausted repairs")
+      expect(out.string).to be_empty
+    end
+
+    it "submits a verified commit locally without requiring GitHub" do
+      data = YAML.safe_load_file(@task_path)
+      data["verification"] = [{"name" => "specs", "command" => [RbConfig.ruby, "-e", "exit 0"], "timeout_seconds" => 5}]
+      File.write(@task_path, YAML.dump(data))
+      fake_codex
+      executable = File.expand_path("../bin/factory", __dir__)
+      stdout, stderr, status = Open3.capture3({"PATH" => "#{@directory}:#{ENV.fetch('PATH')}"}, RbConfig.ruby, executable, "submit", "--no-publish", @task_path)
+      expect(status.exitstatus).to eq(0)
+      expect(JSON.parse(stdout)).to include("state" => "committed", "verification" => "passed")
+      expect(stderr).to include("Committing verified changes", "committed locally")
+      expect(git("status", "--porcelain")).to be_empty
+    end
+
+    it "returns a nonzero status for publication failures" do
+      allow_any_instance_of(Factory::Runner).to receive(:run).and_raise(Factory::PublicationError, "push failed")
+      expect(described_class.run(["submit", @task_path], out: out, err: err)).to eq(1)
+      expect(err.string).to include("Submission failed: push failed")
       expect(out.string).to be_empty
     end
   end

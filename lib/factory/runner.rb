@@ -1,25 +1,47 @@
 module Factory
   class Runner
-    def initialize(task:, store:, agent: CodexAgent.new(task: task, store: store), verifier: Verifier.new(task: task, store: store))
+    def initialize(task:, store:, agent: CodexAgent.new(task: task, store: store), verifier: Verifier.new(task: task, store: store), publisher: GitHubPublisher.new(task: task, store: store))
       @store, @agent, @verifier = store, agent, verifier
       @max_repairs = task.to_h.fetch("limits").fetch("max_repairs")
+      @publisher = publisher
       @workspace = GitWorkspace.new(task: task, store: store)
     end
 
-    def run(verify: false)
+    def run(verify: false, commit: false, publish: false, remote: "origin")
+      raise ArgumentError, "Commit requires verification; publication requires a commit" if (commit && !verify) || (publish && !commit)
       workspace = @workspace.prepare
-      @store.transition("implementing")
       begin
+        if publish
+          @store.transition("preflighting")
+          target = @publisher.preflight(workspace, remote: remote)
+        end
+        @store.transition("implementing")
         agent_result = @agent.implement(workspace)
         @store.record_agent(agent_result, phase: "implementing", attempt: 0)
         @workspace.verify_identity(workspace)
         @store.transition("implemented")
-        verify ? verify_and_repair(workspace) : @store.snapshot
+        verify_and_repair(workspace) if verify
+        if commit
+          @store.transition("committing")
+          sha = @workspace.commit_verified(workspace)
+          return @store.transition("no_changes") unless sha
+          @store.transition("committed")
+          if publish
+            @store.transition("publishing")
+            @publisher.publish(workspace, target: target)
+            @store.transition("awaiting_review")
+          end
+        end
+        @store.snapshot
       rescue Interrupt
         @store.transition("interrupted", "failed_stage" => @store.snapshot.fetch("state"))
         raise
-      rescue AgentError, WorkspaceError, VerificationError, SystemCallError => e
-        @store.transition("failed", "failed_stage" => @store.snapshot.fetch("state"), "error" => e.message)
+      rescue AgentError, WorkspaceError, VerificationError, PublicationError, SystemCallError => e
+        stage = @store.snapshot.fetch("state")
+        @store.transition("failed", "failed_stage" => stage, "error" => e.message)
+        if %w[preflighting committing publishing].include?(stage)
+          raise PublicationError, "#{e.message}; results: #{File.join(@store.directory, 'result.json')}"
+        end
         if e.is_a?(VerificationError)
           raise VerificationError, "#{e.message}; results: #{File.join(@store.directory, 'result.json')}"
         end

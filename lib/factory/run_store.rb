@@ -66,9 +66,12 @@ module Factory
 
     def transition(state, attributes = {})
       allowed = {"pending" => %w[preparing], "preparing" => %w[prepared failed interrupted],
-                 "prepared" => %w[implementing], "implementing" => %w[implemented failed interrupted],
+                 "prepared" => %w[preflighting implementing], "preflighting" => %w[implementing failed interrupted],
+                 "implementing" => %w[implemented failed interrupted],
                  "implemented" => %w[verifying], "verifying" => %w[verified repairing failed interrupted],
-                 "repairing" => %w[verifying failed interrupted]}
+                 "repairing" => %w[verifying failed interrupted], "verified" => %w[committing],
+                 "committing" => %w[committed no_changes failed interrupted],
+                 "committed" => %w[publishing], "publishing" => %w[awaiting_review failed interrupted]}
       unless allowed.fetch(@data.fetch("state"), []).include?(state)
         raise ArgumentError, "Invalid run transition: #{@data.fetch('state')} -> #{state}"
       end
@@ -80,6 +83,16 @@ module Factory
     def record_workspace(workspace)
       @data["workspace"] = copy(workspace)
       record_event("workspace_recorded")
+    end
+
+    def record_commit(sha)
+      @data["commit"] = sha
+      record_event("commit_created", "commit" => sha)
+    end
+
+    def record_publication(attributes)
+      @data["publication"] = (@data["publication"] || {}).merge(copy(attributes))
+      record_event("publication_updated")
     end
 
     def record_agent(result, phase:, attempt:)
