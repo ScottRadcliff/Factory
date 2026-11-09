@@ -2,7 +2,7 @@
 
 A Ruby orchestrator for taking structured development tasks through Codex implementation, verification, repair, and GitHub pull request review.
 
-The first increment implements task validation only. Agent execution, worktrees, verification execution, retries, and PR publication are planned subsequent increments.
+Task validation, subprocess execution, and file-backed run logging are implemented. The CLI currently exposes validation; execution primitives are available through Ruby. Worktrees, agent execution, verification orchestration, retries, and PR publication are subsequent increments.
 
 ## Setup
 
@@ -50,15 +50,37 @@ Task files should come from trusted operators: future execution increments will 
 
 ## Architecture and next increments
 
-`TaskSpec` loads and validates immutable task data. `CLI` handles output and exit codes. Tests cover the schema and actual CLI invocation.
+`TaskSpec` loads and validates immutable task data. `CLI` handles output and exit codes. `CommandRunner` executes subprocesses, and `RunStore` retains their inputs, output, and results.
+
+### Subprocess execution and logs
+
+The Ruby API can run individual commands without invoking an agent:
+
+```ruby
+require_relative "lib/factory"
+
+task = Factory::TaskSpec.load("examples/task.yml")
+store = Factory::RunStore.new(task: task)
+runner = Factory::CommandRunner.new(store: store)
+result = runner.call(["ruby", "--version"], chdir: task.to_h.fetch("repository"), timeout: 10)
+puts result.fetch("state")
+puts store.directory
+```
+
+Run artifacts default to `<repository-parent>/.factory/<repository-name>/<task-id>-<uuid>/`. `RunStore` also accepts `root:`; roots inside the target repository, including through symlinks, are rejected. Each private run directory contains the effective `task.yml`, an atomically replaced `result.json`, an append-only `events.jsonl`, and numbered command directories with `stdin.txt`, `stdout.log`, and `stderr.log`.
+
+Commands execute directly from argument arrays, with no implicit shell. Output streams go directly to files to avoid retaining large output in memory. Results distinguish success, nonzero exit, spawn errors, signal termination, timeout, and interruption. Timeouts use a monotonic clock and terminate the process group with TERM followed by KILL after a short grace period. Remaining descendants in that group are terminated when their leader exits. Processes that deliberately create separate sessions can escape this group; this is process management, not a security sandbox.
+
+Interruptions retain command results and re-raise `Interrupt`. Command failures return structured results so the future orchestrator can decide what to do. The run remains `pending` because task lifecycle transitions belong to the future `Runner`. Storage currently assumes a single writer; crash recovery, automatic resumption, and log rotation are deferred. Logs include command arguments, input, and unredacted output, so keep credentials out of task prompts and arguments and protect retained artifacts.
+
+### Remaining increments
 
 Build the remaining pieces in this order, with tests at each boundary:
 
-1. `CommandRunner` and `RunStore`: bounded subprocess execution, streamed logs, and atomic result snapshots outside target checkouts.
-2. `GitWorkspace`: resolve a base commit and create a unique worktree and branch without changing the original checkout.
-3. `CodexAgent`: noninteractive implementation in the worktree with explicit sandbox settings.
-4. `Verifier` and `Runner`: execute checks, bound repair attempts, and record explicit failure states.
-5. `GitHubPublisher`: commit verified changes, push, and create a draft PR requiring human approval before merging.
+1. `GitWorkspace`: resolve a base commit and create a unique worktree and branch without changing the original checkout.
+2. `CodexAgent`: noninteractive implementation in the worktree with explicit sandbox settings.
+3. `Verifier` and `Runner`: execute checks, bound repair attempts, and record explicit failure states.
+4. `GitHubPublisher`: commit verified changes, push, and create a draft PR requiring human approval before merging.
 
 The intended lifecycle is `pending → preparing → implementing → verifying → committing → publishing → awaiting_review`. Failed verification may enter `repairing` and return to `verifying` within the repair budget. Failures and interruptions retain artifacts for inspection. Local-only runs will stop after verification and commit.
 
