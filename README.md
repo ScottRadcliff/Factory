@@ -4,6 +4,20 @@ A Ruby orchestrator for taking structured development tasks through Codex implem
 
 The first milestone is implemented: task validation, isolated worktrees, Codex implementation, verification, bounded repairs, retained logs, local commits, and draft GitHub PR publication. The CLI exposes `validate`, `prepare`, `implement`, `run`, and `submit`. Real target applications still need an end-to-end run to validate their environment and task setup.
 
+## Table of contents
+
+- [Setup](#setup)
+- [Example workflow](#example-workflow)
+- [Make shortcuts](#make-shortcuts)
+- [Validate a task](#validate-a-task)
+- [Task format](#task-format)
+- [Prepare an isolated worktree](#prepare-an-isolated-worktree)
+- [Implement a task with Codex](#implement-a-task-with-codex)
+- [Run implementation, verification, and repairs](#run-implementation-verification-and-repairs)
+- [Commit and submit for review](#commit-and-submit-for-review)
+- [Docker Compose verification](#docker-compose-verification)
+- [Architecture and next increments](#architecture-and-next-increments)
+
 ## Setup
 
 Use Ruby 3.3 or later, below 4.0, and Bundler. The repository pins Ruby 3.3.0 for local development through `.ruby-version` and `.tool-versions`.
@@ -14,6 +28,76 @@ bundle exec rspec
 ```
 
 Validation uses Ruby standard libraries and needs no credentials, database, Codex installation, or GitHub CLI.
+
+## Example workflow
+
+Suppose you have a Rails application at `~/code/my-app` and want to change its existing home-page heading to **Factory Test App**, with a Minitest regression test. This example assumes the app uses Docker Compose with `compose.yaml`, a `web` service, and a relative `.:/app` mount, as in the [Docker sample](examples/docker-task.yml.sample). Run factory commands from this repository's root directory.
+
+### 1. Prepare the target application and authentication
+
+Commit the application's starting code on its local `main` branch. The factory starts from that commit; uncommitted changes in your normal checkout are not included. For GitHub submission, also push `main` to the application's GitHub remote. This example uses remote `origin`; substitute your app's remote name if different.
+
+Install and authenticate Codex CLI, then authenticate GitHub CLI using the Make shortcut:
+
+```sh
+codex login
+make login
+make auth-check
+```
+
+Docker must be running. The factory itself runs on your host; this task's verification runs inside containers. A local-only run does not require GitHub authentication or a GitHub remote.
+
+### 2. Create a small, concrete task
+
+Create a local task from the Docker sample:
+
+```sh
+cp examples/docker-task.yml.sample examples/home-heading.yml
+```
+
+Edit `examples/home-heading.yml` to set the repository path and confirm the requested change:
+
+```yaml
+repository: ~/code/my-app
+base_branch: main
+title: Update the home page heading
+description: |
+  Change the existing home page heading to "Factory Test App".
+  Add regression coverage using the application's existing test framework.
+```
+
+Keep the sample's remaining fields, including its acceptance criteria, Docker verification, cleanup, and repair limits. Adapt the service and test commands if your application's setup differs. Use a task that matches code that actually exists, or explicitly describe any new feature you want created. Local task files under `examples/` are ignored by Git.
+
+Validate the complete specification before starting an agent:
+
+```sh
+make validate TASK=examples/home-heading.yml
+```
+
+### 3. Choose one execution path
+
+For the full workflow, including a draft PR:
+
+```sh
+make submit TASK=examples/home-heading.yml REMOTE=origin
+```
+
+The factory creates a unique worktree and branch, checks GitHub access, invokes Codex, runs the Docker checks, and requests repairs if necessary. Once verification passes, it commits the changes, pushes the branch, and creates a draft PR. Live status appears in the terminal; the final JSON includes the worktree path, commit SHA, results path, and PR URL under `publication.pull_request`.
+
+If you want to stay local instead, choose one of these alternatives:
+
+| Command | Stops after |
+| --- | --- |
+| `make run TASK=examples/home-heading.yml` | Implementation and successful verification; changes remain uncommitted. |
+| `make submit-local TASK=examples/home-heading.yml` | Successful verification and a local commit; nothing is pushed. |
+
+Each invocation starts a new task run. Running `submit` after `run` or `submit-local` repeats implementation in a new worktree; it does not publish the previous run.
+
+### 4. Review the result or investigate a failure
+
+On success, open the PR URL from the result and review the diff, tests, and acceptance criteria. Mark the draft ready for review when appropriate. A human approves and merges the PR; the factory never merges it. Your normal application checkout remains on its original branch.
+
+For a local run, use the printed worktree path to inspect its files and Git state. Logs and summaries remain alongside that worktree. If a run fails, open the printed `result.json` to find `failed_stage`, `error`, and command log paths. Inspect the failed command's `stderr.log` and Codex's summary before retrying. Fix missing dependencies, authentication, or task/setup mismatches rather than increasing the repair limit without understanding the failure. If publication failed, check `publication.pushed` and GitHub first because the branch may already have been pushed.
 
 ## Make shortcuts
 
@@ -71,7 +155,7 @@ All fields in the native example are required except `limits`. Omitting `limits`
 
 Strings cannot contain NUL bytes. YAML aliases, object deserialization, duplicate keys, and multiple documents are rejected. Validation checks the specification and directory existence; it does not check Git state, installed verification tools, or acceptance criteria satisfaction. No configured commands execute during validation.
 
-Task files should come from trusted operators: future execution increments will run their configured commands. Worktrees will isolate changes but will not be a security boundary for host processes.
+Task files should come from trusted operators: verification runs their configured commands. Worktrees isolate changes but are not a security boundary for host processes.
 
 ## Prepare an isolated worktree
 
@@ -173,7 +257,7 @@ Published runs end in `awaiting_review`. JSON results include `commit` and `publ
 
 `run` remains verification-only; `submit --no-publish` commits locally; `submit` commits, pushes, and creates a draft PR. All three retain their artifacts. Submission tests use a local bare Git remote and a simulated GitHub executable, so automated tests do not create real GitHub PRs.
 
-### Docker Compose verification
+## Docker Compose verification
 
 For a Rails/Minitest application with `compose.yaml`, service `web`, and a relative `.:/app` bind mount, start with `examples/docker-task.yml.sample`. Copy it to a local task file and set the repository and task details. The sample runs dependency installation, test-database preparation, and `bin/rails test` inside a one-off container. It uses an explicit Compose file in the worktree and builds from that directory. Adapt the service, Compose filename, and test commands for other applications.
 
