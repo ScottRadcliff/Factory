@@ -62,6 +62,8 @@ RSpec.describe "Verified submission" do
     expect { runner.run(verify: true, commit: true, publish: true) }.to raise_error(Factory::PublicationError)
     expect(store.snapshot).to include("state" => "failed", "failed_stage" => "preflighting")
     expect(store.snapshot.fetch("commands").none? { |command| command.fetch("argv").first.end_with?("/codex") }).to be(true)
+    expect(store.snapshot).not_to have_key("workspace")
+    expect(git("worktree", "list", "--porcelain").scan(/^worktree /).length).to eq(1)
   end
 
   it "requires the base branch to exist on the selected remote before invoking Codex" do

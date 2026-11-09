@@ -37,6 +37,12 @@ RSpec.describe Factory::CLI do
     expect(err.string).to include("invalid option", "Usage:")
   end
 
+  it "rejects contradictory cleanup modes before reading a task or changing files" do
+    expect(described_class.run(["cleanup", "--apply", "--dry-run", "/missing.yml"], out: out, err: err)).to eq(2)
+    expect(err.string).to include("Choose either --dry-run or --apply")
+    expect(out.string).to be_empty
+  end
+
   it "runs the actual executable from another working directory" do
     executable = File.expand_path("../bin/factory", __dir__)
     Dir.mktmpdir do |directory|
@@ -134,6 +140,23 @@ RSpec.describe Factory::CLI do
       expect(described_class.run(["submit", @task_path], out: out, err: err)).to eq(1)
       expect(err.string).to include("Submission failed: push failed")
       expect(out.string).to be_empty
+    end
+
+    it "lists and previews retained runs before an explicit cleanup" do
+      store = Factory::RunStore.new(task: task)
+      workspace = Factory::GitWorkspace.new(task: task, store: store).prepare
+      store.transition("implementing")
+      store.transition("implemented")
+      expect(described_class.run(["runs", @task_path], out: out, err: err)).to eq(0)
+      expect(JSON.parse(out.string).fetch("runs").first.fetch("state")).to eq("implemented")
+      out.truncate(0); out.rewind
+      expect(described_class.run(["cleanup", "--dry-run", @task_path], out: out, err: err)).to eq(0)
+      expect(JSON.parse(out.string).fetch("runs").first.fetch("action")).to eq("would_remove")
+      expect(File.directory?(workspace.fetch("path"))).to be(true)
+      out.truncate(0); out.rewind
+      expect(described_class.run(["cleanup", "--apply", "--run", store.snapshot.fetch("run_id"), @task_path], out: out, err: err)).to eq(0)
+      expect(JSON.parse(out.string).fetch("runs").first.fetch("action")).to eq("removed")
+      expect(File.directory?(workspace.fetch("path"))).to be(false)
     end
   end
 end

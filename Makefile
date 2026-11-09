@@ -1,10 +1,11 @@
 TASK ?= examples/task.yml
 REMOTE ?= gh
 REPO ?=
+RUN_ID ?=
 CLEAN_ENV = env -u GITHUB_TOKEN -u GH_TOKEN
 
 .DEFAULT_GOAL := help
-.PHONY: help login auth-check repo-check validate prepare implement run submit-local submit test
+.PHONY: help login auth-check repo-check validate prepare implement run submit-local submit runs cleanup cleanup-apply test
 
 help:
 	@echo "make login           Authenticate GitHub CLI through the browser"
@@ -17,6 +18,10 @@ help:
 	@echo "make run             Implement, verify, and repair"
 	@echo "make submit-local    Implement, verify, and commit locally"
 	@echo "make submit          Implement, verify, commit, push, and open a draft PR"
+	@echo "make runs            List retained runs and cleanup eligibility"
+	@echo "make cleanup         Preview safe worktree removals"
+	@echo "make cleanup-apply   Remove eligible worktrees; retain branches and logs"
+	@echo "                     Optional RUN_ID=... selects one run for cleanup"
 	@echo "make test            Run the factory's RSpec suite"
 	@echo "Overrides: TASK=path/to/task.yml REMOTE=origin (defaults: examples/task.yml, gh)"
 
@@ -47,6 +52,15 @@ submit-local:
 
 submit:
 	$(CLEAN_ENV) bin/factory submit --remote "$(REMOTE)" "$(TASK)"
+
+runs:
+	$(CLEAN_ENV) bin/factory runs "$(TASK)"
+
+cleanup:
+	$(CLEAN_ENV) bin/factory cleanup --dry-run $(if $(RUN_ID),--run "$(RUN_ID)") "$(TASK)"
+
+cleanup-apply:
+	$(CLEAN_ENV) bin/factory cleanup --apply $(if $(RUN_ID),--run "$(RUN_ID)") "$(TASK)"
 
 test:
 	bundle exec rspec

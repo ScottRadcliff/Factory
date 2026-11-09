@@ -4,17 +4,24 @@ module Factory
       @store, @agent, @verifier = store, agent, verifier
       @max_repairs = task.to_h.fetch("limits").fetch("max_repairs")
       @publisher = publisher
+      @task = task.to_h
       @workspace = GitWorkspace.new(task: task, store: store)
     end
 
     def run(verify: false, commit: false, publish: false, remote: "origin")
       raise ArgumentError, "Commit requires verification; publication requires a commit" if (commit && !verify) || (publish && !commit)
-      workspace = @workspace.prepare
+      @store.with_lock { execute(verify: verify, commit: commit, publish: publish, remote: remote) }
+    end
+
+    private
+
+    def execute(verify:, commit:, publish:, remote:)
       begin
         if publish
           @store.transition("preflighting")
-          target = @publisher.preflight(workspace, remote: remote)
+          target = @publisher.preflight({"path" => @task.fetch("repository"), "base_branch" => @task.fetch("base_branch")}, remote: remote)
         end
+        workspace = @workspace.prepare
         @store.transition("implementing")
         agent_result = @agent.implement(workspace)
         @store.record_agent(agent_result, phase: "implementing", attempt: 0)
@@ -34,10 +41,12 @@ module Factory
         end
         @store.snapshot
       rescue Interrupt
+        raise if @store.snapshot.fetch("state") == "interrupted"
         @store.transition("interrupted", "failed_stage" => @store.snapshot.fetch("state"))
         raise
       rescue AgentError, WorkspaceError, VerificationError, PublicationError, SystemCallError => e
         stage = @store.snapshot.fetch("state")
+        raise if stage == "failed"
         @store.transition("failed", "failed_stage" => stage, "error" => e.message)
         if %w[preflighting committing publishing].include?(stage)
           raise PublicationError, "#{e.message}; results: #{File.join(@store.directory, 'result.json')}"
@@ -48,8 +57,6 @@ module Factory
         raise AgentError, "#{e.message}; results: #{File.join(@store.directory, 'result.json')}"
       end
     end
-
-    private
 
     def verify_and_repair(workspace)
       repairs = 0

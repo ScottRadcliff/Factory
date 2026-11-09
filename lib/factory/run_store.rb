@@ -5,15 +5,30 @@ require "time"
 require "yaml"
 
 module Factory
+  class RunBusyError < StandardError; end
+
   # Single-writer storage. Recovery/resumption is intentionally a later increment.
   class RunStore
     attr_reader :directory
+
+    def self.default_root(repository)
+      repository = File.realpath(repository)
+      File.join(File.dirname(repository), ".factory", File.basename(repository))
+    end
+
+    def self.open(directory)
+      store = allocate
+      store.instance_variable_set(:@directory, directory)
+      store.instance_variable_set(:@progress, nil)
+      store.instance_variable_set(:@data, JSON.parse(File.read(File.join(directory, "result.json"))))
+      store
+    end
 
     def initialize(task:, root: nil, progress: nil)
       @progress = progress
       spec = task.to_h
       repository = File.realpath(spec.fetch("repository"))
-      root ||= File.join(File.dirname(repository), ".factory", File.basename(repository))
+      root ||= self.class.default_root(repository)
       root = canonical_path(root)
       if root == repository || root.start_with?(repository + File::SEPARATOR)
         raise ArgumentError, "Run artifacts must be outside the target repository"
@@ -53,6 +68,20 @@ module Factory
       copy(@data)
     end
 
+    def with_lock
+      path = File.join(directory, "run.lock")
+      raise RunBusyError, "Run lock must not be a symlink" if File.symlink?(path)
+      File.open(path, File::RDWR | File::CREAT, 0o600) do |file|
+        raise RunBusyError, "Run is already in use: #{directory}" unless file.flock(File::LOCK_EX | File::LOCK_NB)
+        yield
+      end
+    end
+
+    def record_cleanup(attributes)
+      @data["cleanup"] = copy(attributes)
+      record_event("worktree_cleanup", attributes)
+    end
+
     def command_waiting(command, elapsed)
       @progress&.waiting(command, elapsed)
     end
@@ -65,8 +94,8 @@ module Factory
     end
 
     def transition(state, attributes = {})
-      allowed = {"pending" => %w[preparing], "preparing" => %w[prepared failed interrupted],
-                 "prepared" => %w[preflighting implementing], "preflighting" => %w[implementing failed interrupted],
+      allowed = {"pending" => %w[preflighting preparing], "preparing" => %w[prepared failed interrupted],
+                 "prepared" => %w[implementing], "preflighting" => %w[preparing failed interrupted],
                  "implementing" => %w[implemented failed interrupted],
                  "implemented" => %w[verifying], "verifying" => %w[verified repairing failed interrupted],
                  "repairing" => %w[verifying failed interrupted], "verified" => %w[committing],

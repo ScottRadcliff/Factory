@@ -15,6 +15,7 @@ The first milestone is implemented: task validation, isolated worktrees, Codex i
 - [Implement a task with Codex](#implement-a-task-with-codex)
 - [Run implementation, verification, and repairs](#run-implementation-verification-and-repairs)
 - [Commit and submit for review](#commit-and-submit-for-review)
+- [Inspect runs and clean up worktrees](#inspect-runs-and-clean-up-worktrees)
 - [Docker Compose verification](#docker-compose-verification)
 - [Architecture and next increments](#architecture-and-next-increments)
 
@@ -82,7 +83,7 @@ For the full workflow, including a draft PR:
 make submit TASK=examples/home-heading.yml REMOTE=origin
 ```
 
-The factory creates a unique worktree and branch, checks GitHub access, invokes Codex, runs the Docker checks, and requests repairs if necessary. Once verification passes, it commits the changes, pushes the branch, and creates a draft PR. Live status appears in the terminal; the final JSON includes the worktree path, commit SHA, results path, and PR URL under `publication.pull_request`.
+The factory checks GitHub access, creates a unique worktree and branch, invokes Codex, runs the Docker checks, and requests repairs if necessary. Once verification passes, it commits the changes, pushes the branch, and creates a draft PR. Live status appears in the terminal; the final JSON includes the worktree path, commit SHA, results path, and PR URL under `publication.pull_request`.
 
 If you want to stay local instead, choose one of these alternatives:
 
@@ -110,6 +111,8 @@ make validate
 make run
 make submit-local
 make submit
+make runs
+make cleanup
 ```
 
 `submit-local` verifies and commits locally. `submit` verifies, commits, pushes, and creates a draft PR. These targets start separate runs; they are alternatives, not steps to run consecutively. Defaults are `TASK=examples/task.yml` and `REMOTE=gh`. Override them as needed:
@@ -169,7 +172,7 @@ This creates a unique `factory/<task-id>-<uuid>` branch and a worktree inside th
 
 Preparation uses the named local branch without fetching. Update that branch yourself before preparation if you need newer remote changes. Your original checkout's branch, HEAD, staged changes, and working files are preserved; uncommitted changes are not copied into the worktree. Git metadata is shared. Subdirectory paths, missing branches, and invalid branch names fail preparation with retained command logs. Git hooks and Git configuration still apply.
 
-Each invocation creates a fresh run. Failed or interrupted preparation retains its planned workspace and artifacts when available, including any partial Git changes, for manual inspection. There is no automatic cleanup or resume yet. Exit status is `1` for preparation failures and `130` for interruption.
+Each invocation creates a fresh run. Failed or interrupted preparation retains its planned workspace and artifacts when available, including any partial Git changes, for manual inspection. Nothing is removed automatically; use explicit worktree cleanup when ready. Resumption is not supported. Exit status is `1` for preparation failures and `130` for interruption.
 
 ## Implement a task with Codex
 
@@ -247,7 +250,7 @@ bin/factory submit examples/task.yml
 bin/factory submit --remote gh examples/task.yml
 ```
 
-Publication defaults to the target app's `origin` remote, not the factory repository's remote. Before calling Codex, submission checks the selected remote's push URL, resolves its GitHub repository through `gh`, checks authentication for that host, and checks that the base branch exists on the remote. A worktree and logs may already exist if preflight fails. Read access is checked; GitHub ultimately enforces push and PR permissions. Preflight does not fetch or update your local base branch.
+Publication defaults to the target app's `origin` remote, not the factory repository's remote. Before creating a worktree or calling Codex, submission checks the selected remote's push URL, resolves its GitHub repository through `gh`, checks authentication for that host, and checks that the base branch exists on the remote. Failed preflight retains diagnostic logs without creating a worktree or branch. Read access is checked; GitHub ultimately enforces push and PR permissions. Preflight does not fetch or update your local base branch.
 
 After verification, submission checks branch/HEAD, stages and commits the worktree, and confirms that hooks did not change the staged tree, parent, branch, or working files. If no changes were produced, the run ends in `no_changes` without creating an empty commit or PR. Changes during a commit or a rejected commit fail the run with retained staged files or commit details.
 
@@ -256,6 +259,36 @@ The factory pushes the recorded SHA to the unique task branch without force-push
 Published runs end in `awaiting_review`. JSON results include `commit` and `publication`, with the remote target, push status, and PR URL. A push can succeed while PR creation fails; the successful push is saved before PR creation begins, and the run ends in `failed` with stage `publishing`. There are no automatic publication retries or rollback. Inspect the remote branch and GitHub before manually retrying, especially after an interruption or ambiguous network error. Re-running `submit` starts a new run rather than resuming the old one.
 
 `run` remains verification-only; `submit --no-publish` commits locally; `submit` commits, pushes, and creates a draft PR. All three retain their artifacts. Submission tests use a local bare Git remote and a simulated GitHub executable, so automated tests do not create real GitHub PRs.
+
+## Inspect runs and clean up worktrees
+
+List all runs for the target repository, including earlier task IDs:
+
+```sh
+make runs
+# Equivalent CLI command:
+bin/factory runs examples/task.yml
+```
+
+Output is JSON with each run's state, worktree path, actual HEAD when inspected, recorded commit, PR URL, uncommitted-change status, cleanup eligibility, and reason. Listing uses local Git state without contacting GitHub or changing the run logs. Run records remain visible after their worktrees are removed.
+
+Preview cleanup before applying it:
+
+```sh
+make cleanup
+# Review rows marked "would_remove", then explicitly apply:
+make cleanup-apply
+```
+
+`make cleanup` and `bin/factory cleanup examples/task.yml` default to dry-run. Removal requires `--apply` through the CLI or the `cleanup-apply` Make target. To select a single run, add `RUN_ID=<full-run-id>` to the Make command, or `--run <full-run-id>` to the CLI command, using the exact ID from the listing. Commands accept `TASK=...`; CLI listing/cleanup also accept `--root DIR` for a custom artifact root.
+
+Cleanup only removes worktrees belonging to finished factory runs that satisfy all safety checks. It preserves active or unfinished runs, intentionally prepared worktrees, Git-locked worktrees, altered branches, unpublished commits, and any staged, unstaged, untracked, or ignored files. Ignored files may include useful logs or credentials, so even a successful published run can be preserved for manual inspection. There is no force option.
+
+A clean checkout at its original base commit can be removed. A clean checkout containing a task commit additionally requires a recorded successful push of that exact commit and fresh confirmation that the recorded remote branch still points to it. Cleanup may contact that Git remote; an unavailable, deleted, or changed remote branch preserves the worktree. Listing reports these candidates as requiring remote confirmation rather than performing the network check itself.
+
+Removal uses `git worktree remove` without force. Branches, commits, PRs, and diagnostic artifacts are retained; no local/remote branches are deleted and no Docker resources are pruned. The existing run's `result.json` records the cleanup outcome, and its command logs capture the Git operation. Already missing worktrees are skipped; cleanup does not prune Git's registry automatically. Invalid records and symlinked artifacts are preserved with a reason instead of being trusted as deletion instructions.
+
+New task execution and cleanup coordinate through an exclusive `run.lock`, and cleanup re-reads the metadata while holding that lock. This protects against another factory process using the same run. For manual work in a checkout, use Git's worktree lock as well; external editors and other tools do not participate in the factory lock. Cleanup failures leave their logs and return a nonzero CLI exit status when Git refuses a removal.
 
 ## Docker Compose verification
 
@@ -296,8 +329,8 @@ Interruptions retain command results and re-raise `Interrupt`. Command failures 
 
 ### Lifecycle and follow-ups
 
-Submission proceeds through `pending → preparing → prepared → preflighting → implementing → implemented → verifying → verified → committing → committed → publishing → awaiting_review`. Preflight is skipped for local-only runs. Verification failures may enter `repairing` and return to `verifying` within the repair budget. Failures and interruptions retain artifacts for inspection. Command selection determines whether execution stops at `prepared`, `implemented`, `verified`, or `committed`; unchanged tasks stop at `no_changes`.
+Submission proceeds through `pending → preflighting → preparing → prepared → implementing → implemented → verifying → verified → committing → committed → publishing → awaiting_review`. Preflight is skipped for local-only runs. Verification failures may enter `repairing` and return to `verifying` within the repair budget. Failures and interruptions retain artifacts for inspection. Command selection determines whether execution stops at `prepared`, `implemented`, `verified`, or `committed`; unchanged tasks stop at `no_changes`. Explicit cleanup records its outcome separately without rewriting the run's execution state.
 
-Operational follow-ups include dependency preflight, structured blocked outcomes, publication recovery, worktree cleanup, and testing against real applications and GitHub repositories.
+Operational follow-ups include dependency preflight, structured blocked outcomes, publication recovery, retention policies for archived logs and branches, and further testing against real applications and GitHub repositories.
 
 Keep execution synchronous and single-agent initially. PostgreSQL, Sidekiq, resumability, and multiple agents remain future work.
