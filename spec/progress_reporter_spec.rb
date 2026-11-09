@@ -42,4 +42,11 @@ RSpec.describe Factory::ProgressReporter do
     output.close
     expect { reporter.event("type" => "run_transition", "state" => "preparing") }.not_to raise_error
   end
+
+  it "shows verification outcomes and the repair budget" do
+    reporter.event("type" => "verification_check", "name" => "specs", "state" => "failed", "attempt" => 0)
+    reporter.event("type" => "run_transition", "state" => "repairing", "repair_attempts" => 1, "max_repairs" => 2)
+    reporter.event("type" => "run_transition", "state" => "verified")
+    expect(output.string).to include("Verification specs: failed", "Starting repair 1/2", "Verification passed")
+  end
 end

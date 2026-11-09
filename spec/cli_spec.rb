@@ -91,5 +91,24 @@ RSpec.describe Factory::CLI do
       expect(err.string).to include("Cannot implement task: agent failed")
       expect(out.string).to be_empty
     end
+
+    it "runs implementation and verification through the CLI" do
+      data = YAML.safe_load_file(@task_path)
+      data["verification"] = [{"name" => "content", "command" => [RbConfig.ruby, "-e", 'exit(File.read("app.txt").include?("implemented") ? 0 : 1)'], "timeout_seconds" => 5}]
+      File.write(@task_path, YAML.dump(data))
+      fake_codex
+      executable = File.expand_path("../bin/factory", __dir__)
+      stdout, stderr, status = Open3.capture3({"PATH" => "#{@directory}:#{ENV.fetch('PATH')}"}, RbConfig.ruby, executable, "run", @task_path)
+      expect(status.exitstatus).to eq(0)
+      expect(JSON.parse(stdout)).to include("state" => "verified", "repair_attempts" => 0)
+      expect(stderr).to include("Verification content: running", "Verification content: succeeded", "Verification passed")
+    end
+
+    it "returns a nonzero status for verification failures" do
+      allow_any_instance_of(Factory::Runner).to receive(:run).and_raise(Factory::VerificationError, "exhausted repairs")
+      expect(described_class.run(["run", @task_path], out: out, err: err)).to eq(1)
+      expect(err.string).to include("Verification failed: exhausted repairs")
+      expect(out.string).to be_empty
+    end
   end
 end

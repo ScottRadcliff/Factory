@@ -2,7 +2,7 @@
 
 A Ruby orchestrator for taking structured development tasks through Codex implementation, verification, repair, and GitHub pull request review.
 
-Task validation, subprocess execution, file-backed run logging, Git worktree preparation, and Codex implementation are implemented. The CLI exposes `validate`, `prepare`, and `implement`. Independent verification, repairs, and PR publication are subsequent increments.
+Task validation, subprocess execution, file-backed run logging, Git worktree preparation, Codex implementation, independent verification, and bounded repairs are implemented. The CLI exposes `validate`, `prepare`, `implement`, and `run`. Commit and PR publication are the remaining milestone work.
 
 ## Setup
 
@@ -101,13 +101,29 @@ bin/factory implement examples/task.yml > /tmp/factory-result.json
 
 Live messages are single lines truncated to 300 characters, with terminal control characters removed. Oversized event lines and malformed events are omitted from live display; complete raw output remains in command logs and is validated afterward. Unknown event types are ignored. Detailed command output is available in the retained logs rather than echoed to the terminal. Command text and agent messages can still contain sensitive information. A closed progress stream does not stop execution. Ruby API calls remain quiet by default; pass `progress: Factory::ProgressReporter.new` to `RunStore` to enable updates.
 
-A successful process must also emit a completed turn and a nonblank summary. Missing executables, authentication failures, timeouts, failed turns, malformed event output, and changed branch/HEAD fail the run with retained logs. Unknown event types are tolerated. The factory makes one agent call and does not automatically retry yet.
+A successful process must also emit a completed turn and a nonblank summary. Missing executables, authentication failures, timeouts, failed turns, malformed event output, and changed branch/HEAD fail the run with retained logs. Unknown event types are tolerated. The `implement` command makes one agent call without repairs.
 
-The run ends in `implemented`, with verification explicitly `pending`. This means agent execution completed, not that the task was fulfilled: read the summary for blockers and inspect the edits. Codex may run checks itself, but the factory does not yet independently verify or repair changes, commit, push, or create a PR. The implementation command uses your Codex account and may incur usage charges.
+The `implement` command ends in `implemented`, with verification explicitly `pending`. This means agent execution completed, not that the task was fulfilled: read the summary for blockers and inspect the edits. Codex may run checks itself; use `run` for independent verification and repairs. Agent calls use your Codex account and may incur usage charges.
+
+## Run implementation, verification, and repairs
+
+```sh
+bin/factory run examples/task.yml
+```
+
+This creates a fresh worktree, implements the task, and runs every configured verification command in YAML order from the worktree root. Each command has its own timeout and retained stdout/stderr logs. The full suite runs even when an earlier check fails. Ensure the target application's dependencies and test services are available before running; setup and database isolation are not automated.
+
+If checks fail, Codex receives their command metadata and the last 8 KiB of each failed stdout/stderr log, labeled as untrusted diagnostic data. Repairs run in the same worktree with distinct summaries and command logs. Every repair is followed by the full verification suite. `max_repairs: 2` permits one implementation and at most two repairs, for at most three verification cycles. Setting it to `0` disables repairs. Check timeouts and nonzero exits consume this budget; missing executables and other command-start failures stop immediately after the check suite. Agent failures stop immediately without infrastructure retries.
+
+The factory checks branch and HEAD after each agent call and verification suite. Progress shows check outcomes and repair counts. `result.json` includes `verification_attempts` with ordered command results, `agent_attempts` with summaries for completed agent calls, and `repair_attempts`. Verification attempt `0` is the initial cycle. Interrupted suites retain completed checks with `complete: false`; command records retain additional details about the interrupted command.
+
+Successful runs end in `verified` with `verification: passed`; failed runs record their stage (`verifying` or `repairing`) and error. Exit codes are `0` for verified runs, `1` for failures, and `130` for interruption. Artifacts and worktrees are retained in all cases. Each invocation starts a new run; resumption is not supported.
+
+Passing configured checks does not prove all acceptance criteria are met. Verification commands execute trusted operator-supplied code directly on the host and may modify files. Human review is still required. This command does not commit, push, or create a PR yet.
 
 ## Architecture and next increments
 
-`TaskSpec` loads and validates immutable task data. `CLI` handles output and exit codes. `CommandRunner` executes subprocesses, and `RunStore` retains their inputs, output, and results. `GitWorkspace` prepares isolated checkouts and checks their Git identity. `CodexAgent` builds prompts and validates agent output. `Runner` coordinates preparation and implementation, recording failure stages and interruption.
+`TaskSpec` loads and validates immutable task data. `CLI` handles output and exit codes. `CommandRunner` executes subprocesses, and `RunStore` retains their inputs, output, and results. `GitWorkspace` prepares isolated checkouts and checks their Git identity. `CodexAgent` builds implementation/repair prompts and validates agent output. `Verifier` executes configured checks; `Runner` coordinates preparation, implementation, verification, and bounded repairs, recording failure stages and interruption. Its Ruby API supports implementation only with `run`, or verification and repairs with `run(verify: true)`.
 
 ### Subprocess execution and logs
 
@@ -134,8 +150,7 @@ Interruptions retain command results and re-raise `Interrupt`. Command failures 
 
 Build the remaining pieces in this order, with tests at each boundary:
 
-1. `Verifier` and an extended `Runner`: execute checks, bound repair attempts, and record explicit failure states.
-2. `GitHubPublisher`: commit verified changes, push, and create a draft PR requiring human approval before merging.
+1. Commit verified changes, push, and create a draft PR through `GitHubPublisher`, requiring human approval before merging.
 
 The intended lifecycle is `pending → preparing → implementing → verifying → committing → publishing → awaiting_review`. Failed verification may enter `repairing` and return to `verifying` within the repair budget. Failures and interruptions retain artifacts for inspection. Local-only runs will stop after verification and commit.
 

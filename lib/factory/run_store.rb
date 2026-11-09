@@ -66,18 +66,39 @@ module Factory
 
     def transition(state, attributes = {})
       allowed = {"pending" => %w[preparing], "preparing" => %w[prepared failed interrupted],
-                 "prepared" => %w[implementing], "implementing" => %w[implemented failed interrupted]}
+                 "prepared" => %w[implementing], "implementing" => %w[implemented failed interrupted],
+                 "implemented" => %w[verifying], "verifying" => %w[verified repairing failed interrupted],
+                 "repairing" => %w[verifying failed interrupted]}
       unless allowed.fetch(@data.fetch("state"), []).include?(state)
         raise ArgumentError, "Invalid run transition: #{@data.fetch('state')} -> #{state}"
       end
       @data.merge!(copy(attributes)).merge!("state" => state)
-      record_event("run_transition", "state" => state)
+      record_event("run_transition", {"state" => state}.merge(@data.slice("repair_attempts", "max_repairs")))
       snapshot
     end
 
     def record_workspace(workspace)
       @data["workspace"] = copy(workspace)
       record_event("workspace_recorded")
+    end
+
+    def record_agent(result, phase:, attempt:)
+      @data["agent"] = copy(result)
+      (@data["agent_attempts"] ||= []) << copy(result.merge("phase" => phase, "attempt" => attempt))
+      record_event("agent_attempt_finished", "phase" => phase, "attempt" => attempt)
+    end
+
+    def record_verification(attempt, checks, complete: false)
+      attempts = (@data["verification_attempts"] ||= [])
+      entry = {"attempt" => attempt, "complete" => complete, "checks" => copy(checks),
+               "success" => complete && checks.all? { |check| check.fetch("success") }}
+      index = attempts.index { |previous| previous.fetch("attempt") == attempt }
+      index ? attempts[index] = entry : attempts << entry
+      record_event("verification_recorded", "attempt" => attempt)
+    end
+
+    def verification_event(name, state, attempt:)
+      record_event("verification_check", "name" => name, "state" => state, "attempt" => attempt)
     end
 
     private

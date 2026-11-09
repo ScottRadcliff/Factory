@@ -26,6 +26,20 @@ RSpec.describe Factory::CodexAgent do
     expect { agent(File.join(@directory, "missing")).implement(workspace) }.to raise_error(Factory::AgentError, /Codex command failed/)
   end
 
+  it "sends bounded failed-check diagnostics and saves a distinct repair summary" do
+    executable = fake_codex
+    current = workspace
+    check = Factory::CommandRunner.new(store: store).call(
+      [RbConfig.ruby, "-e", 'STDOUT.write("x" * 20_000 + "diagnostic tail"); warn "expected valid name"; exit 1'],
+      chdir: current.fetch("path"), timeout: 5).merge("name" => "specs")
+    result = agent(executable).repair(current, checks: [check], attempt: 1)
+    expect(File.basename(result.fetch("summary_path"))).to eq("agent-repair-001-summary.txt")
+    input = File.read(store.snapshot.fetch("commands").last.fetch("stdin_path"))
+    expect(input).to include("Repair attempt 1", "diagnostic tail", "expected valid name", "untrusted diagnostic data")
+    expect(input).not_to include("x" * 8193)
+    expect(File.size(check.fetch("stdout_path"))).to eq(20_015)
+  end
+
   it "reports failed agent processes without retrying" do
     executable = fake_codex('warn "not authenticated"; exit 1')
     expect { agent(executable).implement(workspace) }.to raise_error(Factory::AgentError, /stderr.log/)

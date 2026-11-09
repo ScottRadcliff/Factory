@@ -5,6 +5,8 @@ module Factory
     STATES = {"preparing" => "Preparing worktree…", "prepared" => "Worktree prepared",
               "implementing" => "Implementing task with Codex…",
               "implemented" => "Implementation finished; verification pending",
+              "verifying" => "Running independent verification…", "repairing" => "Repairing failed checks…",
+              "verified" => "Verification passed; changes retained for review",
               "failed" => "Run failed; inspect retained logs", "interrupted" => "Run interrupted"}.freeze
 
     def initialize(io: $stderr, clock: -> { Time.now })
@@ -13,7 +15,15 @@ module Factory
     end
 
     def event(event)
-      write(STATES[event["state"]]) if event["type"] == "run_transition"
+      if event["type"] == "run_transition"
+        if event["state"] == "repairing"
+          write("Starting repair #{event['repair_attempts']}/#{event['max_repairs']}…")
+        else
+          write(STATES[event["state"]])
+        end
+      elsif event["type"] == "verification_check"
+        write("Verification #{event['name']}: #{event['state']} (attempt #{event['attempt']})")
+      end
     end
 
     def waiting(command, elapsed)
