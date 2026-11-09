@@ -50,7 +50,7 @@ RSpec.describe Factory::CLI do
       executable = File.expand_path("../bin/factory", __dir__)
       stdout, stderr, status = Open3.capture3(RbConfig.ruby, executable, "prepare", @task_path)
       expect(status.exitstatus).to eq(0)
-      expect(stderr).to be_empty
+      expect(stderr).to include("Preparing worktree", "Worktree prepared")
       result = JSON.parse(stdout)
       expect(result.fetch("state")).to eq("prepared")
       expect(File.directory?(result.fetch("workspace").fetch("path"))).to be(true)
@@ -78,6 +78,7 @@ RSpec.describe Factory::CLI do
       stdout, stderr, status = Open3.capture3({"PATH" => "#{@directory}:#{ENV.fetch('PATH')}"}, RbConfig.ruby, executable, "implement", @task_path)
       expect(status.exitstatus).to eq(0)
       expect(stderr).to include("results and logs:")
+      expect(stderr).to include("Preparing worktree", "Implementing task with Codex", "Codex: turn completed", "verification pending")
       result = JSON.parse(stdout)
       expect(result.fetch("state")).to eq("implemented")
       expect(result.fetch("agent").fetch("verification")).to eq("pending")

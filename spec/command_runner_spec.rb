@@ -64,6 +64,37 @@ RSpec.describe Factory::CommandRunner do
     expect(File.stat(result.fetch("stdout_path"))).to have_attributes(mode: satisfy { |mode| mode & 0o777 == 0o600 })
   end
 
+  it "delivers complete stdout lines while the child is still running" do
+    marker = File.join(@directory, "observed")
+    lines = []
+    callback = ->(line) { lines << line; File.write(marker, "received") }
+    code = <<~RUBY
+      STDOUT.sync = true
+      STDOUT.write("partial")
+      sleep 0.05
+      puts " line"
+      sleep 0.01 until File.exist?(#{marker.inspect})
+      print "final fragment"
+    RUBY
+    result = run_ruby(code, on_stdout_line: callback)
+    expect(result.fetch("success")).to be(true)
+    expect(lines).to eq(["partial line\n", "final fragment"])
+    expect(File.read(result.fetch("stdout_path"))).to eq("partial line\nfinal fragment")
+  end
+
+  it "bounds live line buffering without altering large raw logs" do
+    lines = []
+    result = run_ruby('puts "a" * 100_000; puts "small"', on_stdout_line: ->(line) { lines << line })
+    expect(lines).to eq(["small\n"])
+    expect(File.size(result.fetch("stdout_path"))).to eq(100_007)
+  end
+
+  it "does not fail the command if a live output observer raises" do
+    result = run_ruby('puts "hello"', on_stdout_line: ->(_line) { raise "observer failed" })
+    expect(result.fetch("success")).to be(true)
+    expect(File.read(result.fetch("stdout_path"))).to eq("hello\n")
+  end
+
   it "terminates commands that ignore TERM within the timeout bound" do
     started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     result = run_ruby('trap("TERM") {}; STDOUT.sync = true; puts "started"; sleep 30', timeout: 0.3)

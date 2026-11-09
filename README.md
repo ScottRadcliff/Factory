@@ -80,6 +80,27 @@ The adapter uses [Codex noninteractive execution](https://learn.chatgpt.com/docs
 
 The factory owns Git operations. It instructs Codex to work as one agent without committing, switching branches, pushing, or publishing, and checks the worktree's branch and HEAD afterward. These checks detect final Git state changes; they are not a security boundary or an audit of every command the agent ran. Existing Codex configuration, repository instructions, tools, and hooks still apply.
 
+### Live status
+
+`prepare` and `implement` print timestamped lifecycle updates to stderr. During implementation, supported Codex events show command activity, changed paths, and agent messages as they arrive. A heartbeat every 30 seconds confirms that the current command is still running, including when Codex emits no events. It indicates process activity, not proof that the task is making progress.
+
+```text
+[2026-11-09T10:42:01-05:00] Preparing worktree…
+[2026-11-09T10:42:02-05:00] Worktree prepared
+[2026-11-09T10:42:02-05:00] Implementing task with Codex…
+[2026-11-09T10:42:08-05:00] Codex: running command: bundle exec rspec
+[2026-11-09T10:42:19-05:00] Codex: changed app/models/user.rb
+[2026-11-09T10:42:35-05:00] Implementation finished; verification pending
+```
+
+Updates are flushed immediately, including when redirected. Stdout remains a final JSON result, so you can save it while watching progress:
+
+```sh
+bin/factory implement examples/task.yml > /tmp/factory-result.json
+```
+
+Live messages are single lines truncated to 300 characters, with terminal control characters removed. Oversized event lines and malformed events are omitted from live display; complete raw output remains in command logs and is validated afterward. Unknown event types are ignored. Detailed command output is available in the retained logs rather than echoed to the terminal. Command text and agent messages can still contain sensitive information. A closed progress stream does not stop execution. Ruby API calls remain quiet by default; pass `progress: Factory::ProgressReporter.new` to `RunStore` to enable updates.
+
 A successful process must also emit a completed turn and a nonblank summary. Missing executables, authentication failures, timeouts, failed turns, malformed event output, and changed branch/HEAD fail the run with retained logs. Unknown event types are tolerated. The factory makes one agent call and does not automatically retry yet.
 
 The run ends in `implemented`, with verification explicitly `pending`. This means agent execution completed, not that the task was fulfilled: read the summary for blockers and inspect the edits. Codex may run checks itself, but the factory does not yet independently verify or repair changes, commit, push, or create a PR. The implementation command uses your Codex account and may incur usage charges.

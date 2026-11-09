@@ -9,7 +9,8 @@ module Factory
   class RunStore
     attr_reader :directory
 
-    def initialize(task:, root: nil)
+    def initialize(task:, root: nil, progress: nil)
+      @progress = progress
       spec = task.to_h
       repository = File.realpath(spec.fetch("repository"))
       root ||= File.join(File.dirname(repository), ".factory", File.basename(repository))
@@ -50,6 +51,17 @@ module Factory
 
     def snapshot
       copy(@data)
+    end
+
+    def command_waiting(command, elapsed)
+      @progress&.waiting(command, elapsed)
+    end
+
+    def codex_activity(line)
+      @progress&.codex_event(JSON.parse(line))
+    rescue JSON::ParserError
+      # Live rendering is best effort; CodexAgent validates the complete log later.
+      nil
     end
 
     def transition(state, attributes = {})
@@ -94,6 +106,7 @@ module Factory
         file.fsync
       end
       File.rename(temporary, File.join(directory, "result.json"))
+      @progress&.event(event)
     end
   end
 end

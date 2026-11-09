@@ -18,7 +18,7 @@ module Factory
       if argv.first == "validate"
         out.puts JSON.pretty_generate({"valid" => true, "source_path" => task.source_path, "task" => task.to_h})
       else
-        store = RunStore.new(task: task)
+        store = RunStore.new(task: task, progress: ProgressReporter.new(io: err))
         if argv.first == "prepare"
           GitWorkspace.new(task: task, store: store).prepare
         else

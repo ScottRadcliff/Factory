@@ -15,7 +15,8 @@ module Factory
       result = @command_runner.call(
         [@executable, "exec", "--sandbox", "workspace-write", "--config", 'approval_policy="never"',
          "--json", "--color", "never", "--output-last-message", summary, "-"],
-        chdir: workspace.fetch("path"), timeout: @task.fetch("limits").fetch("agent_timeout_seconds"), stdin: prompt)
+        chdir: workspace.fetch("path"), timeout: @task.fetch("limits").fetch("agent_timeout_seconds"), stdin: prompt,
+        on_stdout_line: @store.method(:codex_activity))
       unless result.fetch("success")
         raise AgentError, "Codex command #{result.fetch('state')}; see #{result.fetch('stderr_path')}"
       end
