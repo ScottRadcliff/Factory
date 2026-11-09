@@ -1,0 +1,20 @@
+version: 1
+id: reject-blank-display-names
+# Relative to this file. Replace with the path to your application.
+repository: ..
+base_branch: main
+title: Reject blank display names
+description: |
+  Reject empty and whitespace-only display names.
+  Preserve existing behavior for valid names.
+acceptance_criteria:
+  - Empty display names produce a validation error.
+  - Whitespace-only display names produce a validation error.
+  - Existing valid-name behavior remains covered.
+verification:
+  - name: specs
+    command: [bundle, exec, rspec]
+    timeout_seconds: 600
+limits:
+  max_repairs: 2
+  agent_timeout_seconds: 1800
