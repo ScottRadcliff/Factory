@@ -1,3 +1,7 @@
 .bundle/
 vendor/bundle/
 .factory/
+
+# Keep reusable samples; ignore local task specifications.
+examples/*
+!examples/*.sample

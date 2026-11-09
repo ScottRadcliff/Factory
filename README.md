@@ -18,12 +18,14 @@ Validation uses Ruby standard libraries and needs no credentials, database, Code
 ## Validate a task
 
 ```sh
+cp examples/task.yml.sample examples/task.yml
+# Edit examples/task.yml to set repository to your application's directory.
 bin/factory validate examples/task.yml
 ```
 
 Successful validation prints JSON with the absolute task path and normalized specification, including default limits. Invalid tasks produce an error on stderr. Exit codes are `0` for success, `1` for invalid or unreadable task files, and `2` for incorrect CLI usage.
 
-Copy `examples/task.yml`, set `repository` to your application's directory, and describe the change and acceptance criteria. The example points at this repository so it can be validated immediately.
+Copy `examples/task.yml.sample` to `examples/task.yml`, set `repository` to your application's directory, and describe the change and acceptance criteria. Local files under `examples/` are ignored; `*.sample` files remain tracked for sharing.
 
 ## Task format
 
